@@ -130,3 +130,45 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  publish-app-bundle:
+    # Publishes the built site as a downloadable bundle for the Android app's
+    # in-app updater (see /app/README.md). This does NOT rebuild or re-release
+    # the APK — the app just fetches this bundle at runtime when it's online.
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download built site
+        uses: actions/download-artifact@v4
+        with:
+          name: github-pages
+          path: dist-artifact
+
+      - name: Extract and zip bundle
+        run: |
+          mkdir -p bundle_out
+          tar -xf dist-artifact/artifact.tar -C bundle_out
+          cd bundle_out
+          zip -r ../app-bundle.zip . -x ".*"
+          cd ..
+          VERSION="$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA::7}"
+          echo "{\"version\": \"$VERSION\", \"sha\": \"${{ github.sha }}\", \"builtAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"url\": \"https://github.com/${{ github.repository }}/releases/download/app-bundle/app-bundle.zip\"}" > version.json
+          cat version.json
+
+      - name: Publish rolling app-bundle release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete app-bundle --yes || true
+          git push origin :refs/tags/app-bundle || true
+          gh release create app-bundle \
+            app-bundle.zip version.json \
+            --title "App content bundle (rolling)" \
+            --notes "Auto-updated on every push to main. Consumed by the Android app's in-app updater — not a versioned release, always reflects the latest site." \
+            --target ${{ github.sha }}
