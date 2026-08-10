@@ -8,6 +8,7 @@ import ExternalLinkWarning from './components/ExternalLinkWarning.vue'
 import CopyLinkButton from './components/CopyLinkButton.vue'
 import MarkdownMenu from './components/MarkdownMenu.vue'
 import Breadcrumbs from './components/Breadcrumbs.vue'
+import AppUpdater from './components/AppUpdater.vue'
 import './style.css'
 
 export default {
@@ -17,7 +18,8 @@ export default {
     return h(DefaultTheme.Layout, null, {
       'layout-bottom': () => h(Fragment, [
         h(Banner),
-        h(ExternalLinkWarning)
+        h(ExternalLinkWarning),
+        h(AppUpdater)
       ]),
       'doc-before': () => h('div', { class: 'bsc-doc-toolbar' }, [
         h(Breadcrumbs),
