@@ -1,0 +1,126 @@
+name: Build & Release Android App
+
+# Builds the Android app ONCE — a Capacitor-wrapped WebView with the site
+# bundled inside it for offline use. After install, the app self-updates its
+# CONTENT (not the native app itself) on its own: every time it's opened
+# with internet, it checks the "app-bundle" release (republished on every
+# push to main by main.yml) and swaps in the latest site if newer, via
+# @capgo/capacitor-updater. No re-release needed for content changes.
+#
+# Only re-run this workflow when something native actually changes (icon,
+# app name, permissions, Capacitor/plugin versions, package ID) — content
+# changes don't need it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: 'App version name (e.g. 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate markdown files
+        run: |
+          python3 list.py
+          python3 md.py
+
+      - name: Build VitePress site
+        run: npm run docs:build
+
+      - name: Copy built site into app bundle dir
+        run: |
+          mkdir -p app/www
+          cp -r docs/.vitepress/dist/. app/www/
+
+      - name: Add Android platform
+        working-directory: app
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      - name: Restore or generate signing keystore
+        working-directory: app/android
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEYSTORE_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "Using signing keystore from repo secrets."
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.keystore
+            echo "KEYSTORE_ALIAS=$ANDROID_KEYSTORE_ALIAS" >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$ANDROID_KEY_PASSWORD" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret set — generating a throwaway keystore. Fine to sideload/test, but every re-run will produce a differently-signed app, so devices can't 'update' between runs. Add the secrets described in app/README.md before distributing this for real."
+            keytool -genkeypair -v \
+              -keystore release.keystore \
+              -alias bsc -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass bscTempPass123 -keypass bscTempPass123 \
+              -dname "CN=BSc Code Index, OU=Dev, O=Amit Dutta, L=Unknown, S=Unknown, C=IN"
+            echo "KEYSTORE_ALIAS=bsc" >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=bscTempPass123" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=bscTempPass123" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set version
+        working-directory: app/android
+        run: |
+          VERSION_NAME="${{ github.event.inputs.version_name }}"
+          sed -i "s/versionName \".*\"/versionName \"$VERSION_NAME\"/" app/build.gradle
+          sed -i "s/versionCode .*/versionCode ${{ github.run_number }}/" app/build.gradle
+
+      - name: Build signed release APK & AAB
+        working-directory: app/android
+        env:
+          KEYSTORE_ALIAS: ${{ env.KEYSTORE_ALIAS }}
+          KEYSTORE_PASSWORD: ${{ env.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ env.KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleRelease bundleRelease \
+            -Pandroid.injected.signing.store.file=$(pwd)/release.keystore \
+            -Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD \
+            -Pandroid.injected.signing.key.alias=$KEYSTORE_ALIAS \
+            -Pandroid.injected.signing.key.password=$KEY_PASSWORD
+
+      - name: Release to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-v${{ github.event.inputs.version_name }}
+          name: Android App v${{ github.event.inputs.version_name }}
+          body: |
+            One-time native build. Content inside the app updates itself
+            automatically on open when online — this release is only for
+            native/app-shell changes.
+          files: |
+            app/android/app/build/outputs/apk/release/app-release.apk
+            app/android/app/build/outputs/bundle/release/app-release.aab
