@@ -1,0 +1,21 @@
+{
+  "appId": "dev.amit.bsc",
+  "appName": "BSc Code Index",
+  "webDir": "www",
+  "backgroundColor": "#0d1117",
+  "plugins": {
+    "SplashScreen": {
+      "backgroundColor": "#0d1117",
+      "launchAutoHide": true,
+      "launchShowDuration": 800
+    },
+    "CapacitorUpdater": {
+      "autoUpdate": false,
+      "updateUrl": "https://github.com/notamitgamer/bsc/releases/download/app-bundle/version.json",
+      "statsUrl": ""
+    }
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
